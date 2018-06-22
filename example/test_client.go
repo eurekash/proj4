@@ -8,13 +8,29 @@ import (
 	"io/ioutil"
 	"log"
 	"math/rand"
-
+	"strconv"
 	pb "../protobuf/go"
 
 	"golang.org/x/net/context"
 	"google.golang.org/grpc"
 )
 
+func Address(i int) string {
+	conf, err := ioutil.ReadFile("config.json")
+	if err != nil {
+		panic(err)
+	}
+	var dat map[string]interface{}
+	err = json.Unmarshal(conf, &dat)
+	if err != nil {
+		panic(err)
+	}
+	dat = dat[strconv.Itoa(i)].(map[string]interface{})
+	return fmt.Sprintf("%s:%s", dat["ip"], dat["port"])
+}
+
+var address = Address(1)
+/*
 var address = func() string {
 	conf, err := ioutil.ReadFile("config.json")
 	if err != nil {
@@ -27,7 +43,7 @@ var address = func() string {
 	}
 	dat = dat["1"].(map[string]interface{})
 	return fmt.Sprintf("%s:%s", dat["ip"], dat["port"])
-}()
+}()*/
 
 var (
 	OpCode = flag.String("T", "", `DB transactions to perform:

@@ -23,6 +23,10 @@ import (
 	"time"
 )
 
+const maxBlockSize = 50
+const InitHash = "0000000000000000000000000000000000000000000000000000000000000000"
+
+
 type NetworkManager struct {
 	nservers int
 	dat     map[string] interface{}
@@ -39,7 +43,56 @@ type Spider struct {
 	client pb.BlockChainMinerClient
 }
 
-func (sp *Spider) GetBlock(hash string) (*Block, bool) {
+/* Block Operations */
+type Block struct {
+	pb.Block
+	hash 	string
+}
+
+//server
+type server struct{
+	blocks  map[string] *Block
+	transs map[string] *Block
+	buffer map[string] *pb.Transaction
+	bal map[string] int
+	leaf *Block
+	lock sync.RWMutex
+	stop chan bool
+}
+
+var id=flag.Int("id",1,"Server's ID, 1<=ID<=NServers")
+var Dat map[string] interface{}
+var IDstr string
+var IDint int
+var sv *server
+var nm *NetworkManager
+var MyMinerID string
+
+func NewBlock(m *pb.Block) *Block {
+	b := &Block{}
+	b.BlockID = m.GetBlockID()
+	b.PrevHash = m.GetPrevHash()
+	b.MinerID = m.GetMinerID()
+	b.Nonce = m.GetNonce()
+	b.Transactions = m.GetTransactions()
+	return b
+}
+
+func NewNetworkManager(dat_ map[string] interface{}, self_ int) *NetworkManager{
+	M := &NetworkManager{dat: dat_}
+	n := int(dat_["nservers"].(float64)) 
+	M.nservers = n
+	M.conn = make([]*grpc.ClientConn, n+1)
+	M.client = make([]pb.BlockChainMinerClient, n+1)
+	M.status = make([]int, n+1)
+	M.self = self_
+	for i:=1; i<=n; i++ {
+		M.status[i] = 0
+	}
+	return M
+}
+
+func (sp *Spider) GetBlock(hash string) (*Block, bool) { 
 	sv.lock.RLock()
 	prev, valid := sv.blocks[hash]
 	sv.lock.RUnlock()
@@ -65,27 +118,82 @@ func (sp *Spider) GetBlock(hash string) (*Block, bool) {
 	return b, true
 }
 
-func NewNetworkManager(dat_ map[string] interface{}, self_ int) *NetworkManager{
-	M := &NetworkManager{dat: dat_}
-	n := int(dat_["nservers"].(float64)) 
-	M.nservers = n
-	M.conn = make([]*grpc.ClientConn, n+1)
-	M.client = make([]pb.BlockChainMinerClient, n+1)
-	M.status = make([]int, n+1)
-	M.self = self_
-	for i:=1; i<=n; i++ {
-		M.status[i] = 0
+func (M *NetworkManager) GetBlock(hash string) (*Block, bool) {
+	c := make(chan *Block)
+	for i:=1; i<=M.nservers; i++ {
+		if i == M.self {
+			continue
+		}
+		M.lock.RLock()
+		status := M.status[i]
+		cli := M.client[i]
+		M.lock.RUnlock()
+
+		if status == 1 {
+			go func() {
+				sp := &Spider{mark: make(map[string]bool), client:cli}
+				b, ok := sp.GetBlock(hash)
+				if ok {
+					c <- b
+				} else {
+					c <- nil
+				}
+			}()
+		}
 	}
-	return M
+	for i:=1; i<M.nservers*2/3; i++ {
+		b := <- c
+		if b != nil {
+			return b, true
+		}
+	}
+	return nil, false
 }
+
+/* Push Block Operations */
+
+func (M *NetworkManager) PushBlock(b *Block) { 
+	str := b.ToString()
+
+	for i:=1; i<=M.nservers; i++ {
+		if i == M.self {
+			continue
+		}
+
+		M.lock.RLock()
+		status := M.status[i]
+		client := M.client[i]
+		M.lock.RUnlock()
+
+		if status == 1 {
+			client.PushBlock(context.Background(), &pb.JsonBlockString{Json: str})
+		}
+	}
+}
+
+func (s *server) PushBlock(ctx context.Context, in *pb.JsonBlockString) (*pb.Null, error) {
+	temp := new(pb.Block)
+	err := jsonpb.UnmarshalString(in.Json, temp)
+
+	if err != nil {
+		return &pb.Null{}, err
+	}
+
+	b := NewBlock(temp)
+	if s.AddBlock(b) == 1 {
+		s.stop <- true
+	}
+
+	return &pb.Null{}, nil
+}
+
+
 
 func (M *NetworkManager) Connect() {
 	M.connected = false
 	for ;; {
 		for i:=1; i<=M.nservers; i++ {
-			if i == M.self {
-				continue
-			}
+			if i == M.self { continue }
 
 			M.lock.Lock()
 			if M.status[i] == 1 {
@@ -123,25 +231,6 @@ func CheckHash(Hash string) bool {
 	return Hash[0:5]=="00000"
 }
 
-const maxBlockSize = 50
-const InitHash = "0000000000000000000000000000000000000000000000000000000000000000"
-
-
-/* Block Operations */
-type Block struct {
-	pb.Block
-	hash 	string
-}
-
-func NewBlock(m *pb.Block) *Block {
-	b := &Block{}
-	b.BlockID = m.GetBlockID()
-	b.PrevHash = m.GetPrevHash()
-	b.MinerID = m.GetMinerID()
-	b.Nonce = m.GetNonce()
-	b.Transactions = m.GetTransactions()
-	return b
-}
 
 func (m *Block) ToString () string {
 	temp := new (pb.Block)
@@ -182,16 +271,6 @@ func (m *Block) GetTransactions() []*pb.Transaction {
 }
 //Block operations end
 
-//server
-type server struct{
-	blocks  map[string] *Block
-	transs map[string] *Block
-	buffer map[string] *pb.Transaction
-	bal map[string] int
-	leaf *Block
-	lock sync.RWMutex
-	stop chan bool
-}
 
 func NewServer() *server {
 	s := &server{blocks: make(map[string]*Block), 
@@ -416,37 +495,7 @@ func (s *server) GetHeight(ctx context.Context, in *pb.Null) (*pb.GetHeightRespo
 	}
 }
 
-func (M *NetworkManager) GetBlock(hash string) (*Block, bool) {
-	c := make(chan *Block)
-	for i:=1; i<=M.nservers; i++ {
-		if i == M.self {
-			continue
-		}
-		M.lock.RLock()
-		status := M.status[i]
-		cli := M.client[i]
-		M.lock.RUnlock()
 
-		if status == 1 {
-			go func() {
-				sp := &Spider{mark: make(map[string]bool), client:cli}
-				b, ok := sp.GetBlock(hash)
-				if ok {
-					c <- b
-				} else {
-					c <- nil
-				}
-			}()
-		}
-	}
-	for i:=1; i<M.nservers*2/3; i++ {
-		b := <- c
-		if b != nil {
-			return b, true
-		}
-	}
-	return nil, false
-}
 
 func (s *server) GetBlock(ctx context.Context, in *pb.GetBlockRequest) (*pb.JsonBlockString, error) {
 	s.lock.RLock()
@@ -465,21 +514,6 @@ func (s *server) GetBlock(ctx context.Context, in *pb.GetBlockRequest) (*pb.Json
 	return &pb.JsonBlockString{Json: "{}"}, nil
 }
 
-func (s *server) PushBlock(ctx context.Context, in *pb.JsonBlockString) (*pb.Null, error) {
-	temp := new(pb.Block)
-	err := jsonpb.UnmarshalString(in.Json, temp)
-
-	if err != nil {
-		return &pb.Null{}, err
-	}
-
-	b := NewBlock(temp)
-	if s.AddBlock(b) == 1 {
-		s.stop <- true
-	}
-
-	return &pb.Null{}, nil
-}
 
 func (s *server) PushTransaction(ctx context.Context, in *pb.Transaction) (*pb.Null, error) {
 	if !valid_trans(in) {
@@ -532,8 +566,7 @@ func (s *server) Produce() *Block {
 		return nil
 	}
 
-	fmt.Printf("Producing..., prevhash = %s\n",b.PrevHash)
-	str := b.ToString()
+ 	str := b.ToString()
 	index_nonce := strings.Index(str, "goosepig")
 	arr := []byte(str)
 	for nonce := 0; nonce < 99999999; nonce += 1 {
@@ -554,9 +587,8 @@ func (s *server) Produce() *Block {
 			break
 		}
 	}
-	fmt.Println("Add Block!")
 	s.AddBlock(b)
-	fmt.Println("Finish!")
+	fmt.Printf("New Block: Hash = %s\n%s\n", b.GetHash(), b.ToString())
 	//nm.PushBlock(b)
 
 	return b
@@ -564,32 +596,9 @@ func (s *server) Produce() *Block {
 
 
 
-func (M *NetworkManager) PushBlock(b *Block) {
-	str := b.ToString()
 
-	for i:=1; i<=M.nservers; i++ {
-		if i == M.self {
-			continue
-		}
 
-		M.lock.RLock()
-		status := M.status[i]
-		client := M.client[i]
-		M.lock.RUnlock()
 
-		if status == 1 {
-			client.PushBlock(context.Background(), &pb.JsonBlockString{Json: str})
-		}
-	}
-}
-
-var id=flag.Int("id",1,"Server's ID, 1<=ID<=NServers")
-var Dat map[string] interface{}
-var IDstr string
-var IDint int
-var sv *server
-var nm *NetworkManager
-var MyMinerID string
 // Main function, RPC server initialization
 func main() {
 	flag.Parse()

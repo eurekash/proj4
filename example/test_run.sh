@@ -23,13 +23,13 @@ sleep 1
 
 echo "Step 1: Quickly push many transactions"
 for I in `seq 0 9`; do
-	go run ./example/test_client.go -T=TRANSFER --from USER000$I --to USER0099 --value=5 --fee=1
+	go run ./example/test_client.go -T=TRANSFER --from USER000$I --to USER0099 --value=1000 --fee=1
 done
 sleep 10
-echo "Check value: expecting value=995"
+echo "Check value: expecting value=1000"
 go run ./example/test_client.go -T=GET -user=USER0005
 
-echo "Step 2: Slowlu push many transactions, should cause more blocks to be produced"
+echo "Step 2: Slowly push many transactions, should cause more blocks to be produced"
 for I in `seq 0 9`; do
 	go run ./example/test_client.go -T=TRANSFER --from USER000$I --to USER0099 --value=5 --fee=1
 	sleep 2
