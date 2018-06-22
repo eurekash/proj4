@@ -98,12 +98,12 @@ func (sp *Spider) GetBlock(s *server, hash string) (*Block, bool) {
 	prev, valid := s.blocks[hash]
 	s.lock.RUnlock()
 	if valid {
-		log.Printf("spider GetBlock(%s) returns true\n",hash)
+//		log.Printf("spider GetBlock(%s) returns true\n",hash)
 		return prev, true
 	}
 
 	if sp.mark[hash] {
-		log.Printf("spider GetBlock(%s) returns false: cyclic\n",hash)
+//		log.Printf("spider GetBlock(%s) returns false: cyclic\n",hash)
 		return nil, false
 	}
 
@@ -113,27 +113,27 @@ func (sp *Spider) GetBlock(s *server, hash string) (*Block, bool) {
 
 ///		log.Printf("spider GetBlock(%s) json string = %s\n",hash,js.Json)
 	if err != nil {  
-		log.Printf("spider GetBlock(%s) returns false: Get Block json error %v\n",hash,err)
+//		log.Printf("spider GetBlock(%s) returns false: Get Block json error %v\n",hash,err)
 		return nil, false 
 	}
 	temp := new(pb.Block)
 	err = jsonpb.UnmarshalString(js.Json, temp)
 	if err != nil { 
-		log.Printf("spider GetBlock(%s) returns false: Get Block json conv error\n",hash)
+//		log.Printf("spider GetBlock(%s) returns false: Get Block json conv error\n",hash)
 		return nil, false 
 	}
 	b := NewBlock(temp)
 	_, valid = sp.GetBlock(s, b.PrevHash)
 	if !valid { 
-		log.Printf("spider GetBlock(%s) returns false: Prev Block failed\n",hash)
+//		log.Printf("spider GetBlock(%s) returns false: Prev Block failed\n",hash)
 		return nil, false 
 	}
 
 	if s.AddBlock(b) == -1 {  
-		log.Printf("spider GetBlock(%s) returns false: Invalid block\n",hash)
+//		log.Printf("spider GetBlock(%s) returns false: Invalid block\n",hash)
 		return nil, false  
 	}
-	log.Printf("spider GetBlock(%s) returns true\n",hash)
+//	log.Printf("spider GetBlock(%s) returns true\n",hash)
 	return b, true
 }
 
@@ -179,7 +179,7 @@ func (s *server) Init() {
 		for i:=1; i<=nm.nservers; i++ {
 			if i == nm.self { continue }
 			go func(id int) {
-				fmt.Printf("get blocks from %d\n",id)
+				//fmt.Printf("get blocks from %d\n",id)
 				nm.lock.RLock()
 				status := nm.status[id]
 				cli := nm.client[id]
@@ -194,7 +194,7 @@ func (s *server) Init() {
 				}
 			}(i)
 		}
-		time.Sleep(time.Second)
+		time.Sleep(time.Second * 10)
 	}
 }
 
@@ -424,22 +424,33 @@ func (s *server) Extend(b *Block) bool {
 			delete (s.buffer, trans.GetUUID())
 		}
 		s.leaf = b
-		bal := make(map[string]int)
-		uu := make(map[string]bool)
-		if !s.check(b,bal,uu) {
-			log.Printf("check err!")
-		} else {
-			log.Printf("passed check!")
-		}
-		val_chk := true
-		for user,v := range bal {
-			if s.bal[user] != v {
-				val_chk = false
-			}
-		}
-		log.Printf("value check = %t", val_chk)
+//		bal := make(map[string]int)
+//		uu := make(map[string]bool)
+//		if !s.check(b,bal,uu) {
+//			log.Printf("check err!")
+//		} else {
+//			log.Printf("passed check!")
+//		}
+//		val_chk := true
+//		for user,v := range bal {
+//			if s.bal[user] != v {
+//				val_chk = false
+//			}
+//		}
+//		log.Printf("value check = %t", val_chk)
 		return true
 	}
+}
+
+func CheckServerID(s string) bool {
+	if (len(s) != 8) {
+		return false
+	}
+	if s[0] != 'S' || s[1] != 'e' || s[2] != 'r' || s[3] != 'v' || s[4] != 'e' || s[5] != 'r' {
+		return false
+	}
+	_, err := strconv.Atoi(string(s[6:8]))
+	return err == nil
 }
 
 func (s *server) AddBlock(b *Block) int {
@@ -449,21 +460,25 @@ func (s *server) AddBlock(b *Block) int {
 
 	log.Printf("Addblock: %s\n", b.GetHash())
 	if CheckHash(b.GetHash()) == false {
-		log.Printf("Addblock return -1: hash incorrect!\n")
+		//log.Printf("Addblock return -1: hash incorrect!\n")
+		return -1
+	}
+
+	if CheckServerID(b.MinerID) == false {
 		return -1
 	}
 
 	_, exist := s.blocks[b.GetHash()]
 
 	if exist == true {
-		log.Printf("Addblock return 0:  already exists!\n")
+		//log.Printf("Addblock return 0:  already exists!\n")
 		return 0 
 	}
 
 	prev, exist_prev := s.blocks[b.PrevHash]
 
 	if exist_prev == false {
-		log.Printf("Addblock return -1:  already exists!\n")
+		//log.Printf("Addblock return -1:  already exists!\n")
 		return -1
 	}
 
@@ -474,18 +489,18 @@ func (s *server) AddBlock(b *Block) int {
 
 	if s.Extend(b) == false {
 		s.move_leaf(current_tail)
-		log.Printf("Addblock return -1:  invalid extension!\n")
+	//	log.Printf("Addblock return -1:  invalid extension!\n")
 		return -1
 	}
 
 	s.blocks[b.GetHash()] = b
 	if current_tail != nil && (current_tail.Height() > b.Height() || current_tail.Height() == b.Height() && current_tail.GetHash() < b.GetHash()) {
 		s.move_leaf(current_tail)
-		log.Printf("Addblock return 0: not longest!\n")
+	//	log.Printf("Addblock return 0: not longest!\n")
 		return 0
 	} 
 
-	log.Printf("Addblock return 1!\n")
+	//log.Printf("Addblock return 1!\n")
 	return 1
 }
 
@@ -638,7 +653,7 @@ func (s *server) Produce() {
 			index_nonce := strings.Index(str, "goosepig")
 			arr := []byte(str)
 			for nonce:=first*10000000; nonce<(first+1)*10000000; nonce++ {
-				if (nonce & 0x111) == 0 {
+				if (nonce & 0xfff) == 0 {
 					s.lock.RLock()
 					if s.leaf != nil && s.leaf.GetHash() != b.PrevHash {
 						s.lock.RUnlock()

@@ -163,7 +163,7 @@ func main() {
 		} else {
 			log.Printf("TRANSFER Return: %s", r)
 		}
-		time.Sleep(time.Nanosecond * 100000)
+		time.Sleep(time.Nanosecond * 100)
 	}
 	/*
 

@@ -15,5 +15,5 @@
 		"port":"50078",
 		"dataDir":"/tmp/server03/"
 	},
-	"nservers":1
+	"nservers":3
 }
